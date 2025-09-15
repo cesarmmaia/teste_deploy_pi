@@ -12,307 +12,136 @@ app = Flask(__name__,
 
 CORS(app)
 
-# Configuração para Render
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-
-# Inicializar banco de dados
+# Config
+app.secret_key = os.getenv("SECRET_KEY", "chave_dev_segura")
 db = Database()
 
-# Credenciais fixas
-USUARIO = 'admin'
-SENHA = 'admin'
-
-# Decorator para verificar autenticação
+# Middleware de autenticação
 def login_required(f):
     @wraps(f)
     def decorated_function(*args, **kwargs):
-        if 'logado' not in session:
-            if request.headers.get('Content-Type') == 'application/json':
-                return jsonify({'error': 'Não autenticado'}), 401
-            return redirect(url_for('login', next=request.url))
+        if not session.get("logged_in"):
+            return redirect(url_for("login"))
         return f(*args, **kwargs)
     return decorated_function
 
-def verificar_credenciais(username, password):
-    return username == USUARIO and password == SENHA
 
-# Rotas de Autenticação
-@app.route('/login', methods=['GET', 'POST'])
+# ROTAS DE AUTENTICAÇÃO
+@app.route("/login", methods=["GET", "POST"])
 def login():
-    if 'logado' in session:
-        return redirect(url_for('index'))
-    
-    if request.method == 'POST':
-        username = request.form.get('username')
-        password = request.form.get('password')
-        
-        if verificar_credenciais(username, password):
-            session['logado'] = True
-            session['usuario'] = username
-            next_page = request.args.get('next')
-            return redirect(next_page or url_for('index'))
-        else:
-            flash('Credenciais inválidas!', 'error')
-    
-    return render_template('login.html')
+    if request.method == "POST":
+        usuario = request.form.get("usuario")
+        senha = request.form.get("senha")
+        if usuario == "admin" and senha == "123":
+            session["logged_in"] = True
+            return redirect(url_for("index"))
+        flash("Credenciais inválidas")
+    return render_template("login.html")
 
-@app.route('/logout')
+
+@app.route("/logout")
 def logout():
     session.clear()
-    flash('Você foi desconectado!', 'info')
-    return redirect(url_for('login'))
+    return redirect(url_for("login"))
 
-# Rotas Protegidas - Páginas HTML
-@app.route('/')
+
+# ROTAS PRINCIPAIS
+@app.route("/")
+@login_required
 def index():
-    if 'logado' not in session:
-        return redirect(url_for('login'))
-    return render_template('index.html')
+    return render_template("index.html")
 
-@app.route('/agendamentos')
+
+@app.route("/relatorio")
 @login_required
-def pagina_agendamentos():
-    return render_template('agendamentos.html')
+def relatorio_view():
+    return render_template("relatorio.html")
 
-@app.route('/relatorio')
-@login_required
-def pagina_relatorio():
-    return render_template('relatorio.html')
 
-# Rotas para Desinfecções (API)
-@app.route('/desinfeccoes', methods=['GET'])
+# API: DESINFECÇÕES
+@app.route("/desinfeccoes", methods=["GET"])
 @login_required
 def listar_desinfeccoes():
-    try:
-        desinfeccoes = db.get_all_desinfeccoes()
-        return jsonify(desinfeccoes)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify(db.get_all_desinfeccoes())
 
-@app.route('/desinfeccoes', methods=['POST'])
+
+@app.route("/desinfeccoes", methods=["POST"])
 @login_required
 def criar_desinfeccao():
-    try:
-        data = request.get_json()
-        result = db.insert_desinfeccao(
-            data['numero_baia'],
-            data['data_desinfeccao'],
-            data['metodo'],
-            data.get('observacao', '')
-        )
-        return jsonify({'message': 'Desinfecção registrada com sucesso', 'id': result})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    dados = request.get_json()
+    return jsonify(db.insert_desinfeccao(dados))
 
-@app.route('/desinfeccoes/<int:id>', methods=['PUT'])
+
+@app.route("/desinfeccoes/<int:desinfeccao_id>", methods=["PUT"])
 @login_required
-def atualizar_desinfeccao(id):
-    try:
-        data = request.get_json()
-        db.update_desinfeccao(
-            id,
-            data['numero_baia'],
-            data['data_desinfeccao'],
-            data['metodo'],
-            data.get('observacao', '')
-        )
-        return jsonify({'message': 'Desinfecção atualizada com sucesso'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def atualizar_desinfeccao(desinfeccao_id):
+    dados = request.get_json()
+    return jsonify(db.update_desinfeccao(desinfeccao_id, dados))
 
-@app.route('/desinfeccoes/<int:id>', methods=['DELETE'])
+
+@app.route("/desinfeccoes/<int:desinfeccao_id>", methods=["DELETE"])
 @login_required
-def deletar_desinfeccao(id):
-    try:
-        db.delete_desinfeccao(id)
-        return jsonify({'message': 'Desinfecção deletada com sucesso'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def deletar_desinfeccao(desinfeccao_id):
+    return jsonify(db.delete_desinfeccao(desinfeccao_id))
 
-# Rotas para Agendamentos (API)
-@app.route('/api/agendamentos', methods=['GET'])
+
+# API: AGENDAMENTOS
+@app.route("/api/agendamentos", methods=["GET"])
 @login_required
 def listar_agendamentos():
-    try:
-        agendamentos = db.get_all_agendamentos()
-        return jsonify(agendamentos)
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    return jsonify(db.get_all_agendamentos())
 
-@app.route('/api/agendamentos', methods=['POST'])
+
+@app.route("/api/agendamentos", methods=["POST"])
 @login_required
 def criar_agendamento():
-    try:
-        data = request.get_json()
-        result = db.insert_agendamento(
-            data['numero_baia'],
-            data['data_agendamento'],
-            data['metodo'],
-            data.get('observacao', '')
-        )
-        return jsonify({'message': 'Agendamento criado com sucesso', 'id': result})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+    dados = request.get_json()
+    return jsonify(db.insert_agendamento(dados))
 
-@app.route('/api/agendamentos/<int:id>/status', methods=['PUT'])
+
+@app.route("/api/agendamentos/<int:agendamento_id>", methods=["PUT"])
 @login_required
-def atualizar_status_agendamento(id):
-    try:
-        data = request.get_json()
-        db.update_agendamento_status(id, data['status'])
-        return jsonify({'message': 'Status do agendamento atualizado com sucesso'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def atualizar_agendamento(agendamento_id):
+    dados = request.get_json()
+    return jsonify(db.update_agendamento(agendamento_id, dados))
 
-@app.route('/api/agendamentos/<int:id>', methods=['DELETE'])
+
+@app.route("/api/agendamentos/<int:agendamento_id>", methods=["DELETE"])
 @login_required
-def deletar_agendamento(id):
-    try:
-        db.delete_agendamento(id)
-        return jsonify({'message': 'Agendamento deletado com sucesso'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
+def deletar_agendamento(agendamento_id):
+    return jsonify(db.delete_agendamento(agendamento_id))
 
-@app.route('/api/agendamentos/<int:id>/concluir', methods=['POST'])
+
+@app.route("/api/agendamentos/<int:agendamento_id>/concluir", methods=["PUT"])
 @login_required
-def concluir_agendamento(id):
-    try:
-        # Buscar agendamento específico
-        agendamentos = db.get_all_agendamentos()
-        agendamento = next((a for a in agendamentos if a['id'] == id), None)
+def concluir_agendamento(agendamento_id):
+    return jsonify(db.concluir_agendamento(agendamento_id))
 
-        if not agendamento:
-            return jsonify({'error': 'Agendamento não encontrado'}), 404
 
-        # Criar desinfecção real
-        result = db.insert_desinfeccao(
-            agendamento['numero_baia'],
-            datetime.now().strftime('%Y-%m-%d'),
-            agendamento['metodo'],
-            f"Agendamento concluído. Original: {agendamento.get('observacao', '')}"
-        )
-
-        # Atualizar status do agendamento
-        db.update_agendamento_status(id, 'concluido')
-
-        return jsonify({
-            'message': 'Agendamento concluído e desinfecção registrada',
-            'id_desinfeccao': result
-        })
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-# Rota para Relatório (API)
-@app.route('/api/relatorio')
+# ✅ NOVA ROTA DE RELATÓRIO
+@app.route("/api/relatorio", methods=["GET"])
 @login_required
-def api_relatorio():
+def relatorio_api():
     try:
         desinfeccoes = db.get_all_desinfeccoes()
-        
-        # Verificar se há registros
-        if not desinfeccoes:
-            return jsonify({
-                'estatisticas': {
-                    'total': 0, 'ok': 0, 'proximo': 0, 'pendente': 0, 'com_erro': 0
-                },
-                'desinfeccoes': []
-            })
 
-        # Processar dados para relatório
-        for desinfeccao in desinfeccoes:
-            try:
-                # DEBUG: Verificar o tipo da data
-                print(f"Tipo da data_desinfeccao: {type(desinfeccao['data_desinfeccao'])}")
-                print(f"Valor da data_desinfeccao: {desinfeccao['data_desinfeccao']}")
-                
-                # O PostgreSQL retorna datetime.date objects, não strings!
-                if isinstance(desinfeccao['data_desinfeccao'], datetime):
-                    # Já é um objeto datetime
-                    data_desinfeccao = desinfeccao['data_desinfeccao']
-                elif hasattr(desinfeccao['data_desinfeccao'], 'strftime'):
-                    # É um objeto date do PostgreSQL
-                    data_desinfeccao = datetime.combine(desinfeccao['data_desinfeccao'], datetime.min.time())
-                elif isinstance(desinfeccao['data_desinfeccao'], str):
-                    # É uma string (fallback)
-                    data_desinfeccao = datetime.strptime(desinfeccao['data_desinfeccao'], '%Y-%m-%d')
-                else:
-                    # Tipo desconhecido
-                    raise ValueError(f"Tipo de data não suportado: {type(desinfeccao['data_desinfeccao'])}")
-                
-                # Calcular diferença de dias (apenas dias positivos)
-                dias_desde_desinfeccao = max(0, (datetime.now() - data_desinfeccao).days)
-                
-                # Determinar status baseado nos dias
-                if dias_desde_desinfeccao >= 15:
-                    status = 'pendente'
-                elif dias_desde_desinfeccao >= 10:
-                    status = 'proximo'
-                else:
-                    status = 'ok'
-                
-                # Adicionar campos calculados
-                desinfeccao['dias_desde_desinfeccao'] = dias_desde_desinfeccao
-                desinfeccao['status'] = status
-                desinfeccao['data_formatada'] = data_desinfeccao.strftime('%d/%m/%Y')
-                
-            except Exception as e:
-                print(f"Erro ao processar data: {desinfeccao['data_desinfeccao']} - {e}")
-                desinfeccao['dias_desde_desinfeccao'] = None
-                desinfeccao['status'] = 'erro'
-                desinfeccao['data_formatada'] = 'Data inválida'
-
-        # Ordenar por data de desinfecção (mais recente primeiro)
-        desinfeccoes_ordenadas = sorted(
-            desinfeccoes,
-            key=lambda x: (
-                x['dias_desde_desinfeccao'] is not None,
-                -x['dias_desde_desinfeccao'] if x['dias_desde_desinfeccao'] is not None else 0
-            ),
-            reverse=True
-        )
-
-        # Estatísticas para dashboard
+        # calcular estatísticas
         estatisticas = {
-            'total': len(desinfeccoes_ordenadas),
-            'ok': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'ok'),
-            'proximo': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'proximo'),
-            'pendente': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'pendente'),
-            'com_erro': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'erro')
+            "total": len(desinfeccoes),
+            "ok": sum(1 for d in desinfeccoes if d.get("status") == "ok"),
+            "proximo": sum(1 for d in desinfeccoes if d.get("status") == "proximo"),
+            "pendente": sum(1 for d in desinfeccoes if d.get("status") == "pendente"),
+            "com_erro": sum(1 for d in desinfeccoes if d.get("status") == "erro"),
         }
 
         return jsonify({
-            'estatisticas': estatisticas,
-            'desinfeccoes': desinfeccoes_ordenadas
+            "estatisticas": estatisticas,
+            "desinfeccoes": desinfeccoes
         })
-        
     except Exception as e:
-        print(f"Erro crítico em /api/relatorio: {e}")
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': 'Erro interno do servidor ao processar relatório'}), 5000
+        return jsonify({"error": str(e)}), 500
 
-# Rota de health check para Render
-@app.route('/health')
-def health_check():
-    return jsonify({'status': 'healthy', 'message': 'Servidor funcionando'})
 
-# Rota para debug de static files
-@app.route('/debug-static')
-def debug_static():
-    import os
-    static_path = os.path.join(os.path.dirname(__file__), 'static')
-    css_path = os.path.join(static_path, 'css', 'style.css')
-    js_path = os.path.join(static_path, 'js', 'main.js')
-    
-    return f"""
-    Static folder: {static_path}<br>
-    CSS exists: {os.path.exists(css_path) if os.path.exists(static_path) else 'Static folder not found'}<br>
-    JS exists: {os.path.exists(js_path) if os.path.exists(static_path) else 'Static folder not found'}<br>
-    Current working directory: {os.getcwd()}<br>
-    Template folder: {app.template_folder}<br>
-    Static folder: {app.static_folder}
-    """
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=os.environ.get('DEBUG', 'False').lower() == 'true')
+# MAIN
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
