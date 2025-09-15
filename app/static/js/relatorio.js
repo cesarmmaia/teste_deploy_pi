@@ -13,38 +13,78 @@ document.addEventListener('DOMContentLoaded', function() {
 async function carregarRelatorio() {
     try {
         const response = await fetch('/api/relatorio');
+        
+        // Verificar se a resposta é bem-sucedida
+        if (!response.ok) {
+            throw new Error(`Erro HTTP: ${response.status} ${response.statusText}`);
+        }
+        
         const data = await response.json();
         
-        // Verificar se a API retornou a nova estrutura com estatísticas
-        if (data.estatisticas && data.desinfeccoes) {
-            dadosRelatorio = data.desinfeccoes;
-            estatisticasRelatorio = data.estatisticas;
-        } else {
-            // Fallback para estrutura antiga
-            dadosRelatorio = data;
-            estatisticasRelatorio = {
-                total: data.length,
-                ok: data.filter(d => d.status === 'ok').length,
-                proximo: data.filter(d => d.status === 'proximo').length,
-                pendente: data.filter(d => d.status === 'pendente').length
-            };
-        }
+        console.log('Dados recebidos da API:', data);
+        
+        // A API agora retorna {estatisticas: {}, desinfeccoes: []}
+        dadosRelatorio = data.desinfeccoes || [];
+        estatisticasRelatorio = data.estatisticas || {
+            total: 0,
+            ok: 0,
+            proximo: 0,
+            pendente: 0,
+            com_erro: 0
+        };
         
         atualizarDashboard();
         aplicarPaginacao();
     } catch (error) {
         console.error('Erro ao carregar relatório:', error);
-        alert('Erro ao carregar relatório. Verifique o console para detalhes.');
+        
+        // Mostrar mensagem de erro na interface
+        const errorMessage = error.message.includes('500') 
+            ? 'Erro interno do servidor. Verifique os logs do servidor.' 
+            : `Erro: ${error.message}`;
+            
+        // Mostrar mensagem na tabela
+        document.getElementById('corpoTabelaRelatorio').innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-danger">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    ${errorMessage}
+                </td>
+            </tr>
+        `;
+        
+        // Zerar estatísticas em caso de erro
+        estatisticasRelatorio = {
+            total: 0,
+            ok: 0,
+            proximo: 0,
+            pendente: 0,
+            com_erro: 0
+        };
+        atualizarDashboard();
     }
 }
 
 function atualizarDashboard() {
     const dadosFiltrados = aplicarFiltrosNosDados(dadosRelatorio);
     
-    // Atualizar contadores do dashboard - usar estatísticas ou calcular
-    document.getElementById('countOk').textContent = estatisticasRelatorio.ok || dadosFiltrados.filter(d => d.status === 'ok').length;
-    document.getElementById('countProximo').textContent = estatisticasRelatorio.proximo || dadosFiltrados.filter(d => d.status === 'proximo').length;
-    document.getElementById('countPendente').textContent = estatisticasRelatorio.pendente || dadosFiltrados.filter(d => d.status === 'pendente').length;
+    // Usar estatísticas da API ou calcular localmente se não disponíveis
+    const estatisticas = estatisticasRelatorio.total !== undefined ? 
+        estatisticasRelatorio : 
+        {
+            total: dadosFiltrados.length,
+            ok: dadosFiltrados.filter(d => d.status === 'ok').length,
+            proximo: dadosFiltrados.filter(d => d.status === 'proximo').length,
+            pendente: dadosFiltrados.filter(d => d.status === 'pendente').length,
+            com_erro: dadosFiltrados.filter(d => d.status === 'erro').length
+        };
+    
+    // Atualizar contadores do dashboard
+    document.getElementById('countTotal').textContent = estatisticas.total || 0;
+    document.getElementById('countOk').textContent = estatisticas.ok || 0;
+    document.getElementById('countProximo').textContent = estatisticas.proximo || 0;
+    document.getElementById('countPendente').textContent = estatisticas.pendente || 0;
+    document.getElementById('countErro').textContent = estatisticas.com_erro || 0;
     
     atualizarTabela(dadosFiltrados);
     atualizarGraficos(dadosFiltrados);
@@ -110,6 +150,18 @@ function atualizarTabela(dados) {
     const inicio = (paginaAtual - 1) * ITENS_POR_PAGINA;
     const fim = inicio + ITENS_POR_PAGINA;
     const dadosPagina = dados.slice(inicio, fim);
+    
+    if (dadosPagina.length === 0) {
+        tbody.innerHTML = `
+            <tr>
+                <td colspan="8" class="text-center text-muted">
+                    <i class="fas fa-info-circle"></i>
+                    Nenhum registro encontrado
+                </td>
+            </tr>
+        `;
+        return;
+    }
     
     dadosPagina.forEach(item => {
         const tr = document.createElement('tr');
@@ -201,7 +253,8 @@ function formatarStatus(status) {
         'ok': 'No Prazo',
         'proximo': 'Próximo do Prazo',
         'pendente': 'Pendente',
-        'erro': 'Com Erro'
+        'erro': 'Com Erro',
+        'agendado': 'Agendado'
     };
     return statusMap[status] || status;
 }
@@ -247,6 +300,12 @@ function mostrarDetalhes(item) {
 
 function exportarCSV() {
     const dadosFiltrados = aplicarFiltrosNosDados(dadosRelatorio);
+    
+    if (dadosFiltrados.length === 0) {
+        alert('Nenhum dado para exportar!');
+        return;
+    }
+    
     let csv = 'ID,Baia,Data Desinfecção,Data Formatada,Dias Desde,Método,Observação,Status,Última Atualização\n';
     
     dadosFiltrados.forEach(item => {
@@ -299,6 +358,11 @@ function atualizarGraficoMetodos(dados) {
         }
     });
     
+    if (Object.keys(contagemMetodos).length === 0) {
+        ctx.innerHTML = '<p class="text-muted text-center">Nenhum dado disponível para gráfico</p>';
+        return;
+    }
+    
     ctx.chart = new Chart(ctx.getContext('2d'), {
         type: 'pie',
         data: {
@@ -336,7 +400,8 @@ function atualizarGraficoStatus(dados) {
         'ok': 0,
         'proximo': 0,
         'pendente': 0,
-        'erro': 0
+        'erro': 0,
+        'agendado': 0
     };
     
     dados.forEach(item => {
@@ -345,14 +410,19 @@ function atualizarGraficoStatus(dados) {
         }
     });
     
+    if (Object.values(contagemStatus).every(count => count === 0)) {
+        ctx.innerHTML = '<p class="text-muted text-center">Nenhum dado disponível para gráfico</p>';
+        return;
+    }
+    
     ctx.chart = new Chart(ctx.getContext('2d'), {
         type: 'bar',
         data: {
-            labels: ['No Prazo', 'Próximo do Prazo', 'Pendente', 'Com Erro'],
+            labels: ['No Prazo', 'Próximo do Prazo', 'Pendente', 'Com Erro', 'Agendado'],
             datasets: [{
                 label: 'Quantidade de Baias',
-                data: [contagemStatus.ok, contagemStatus.proximo, contagemStatus.pendente, contagemStatus.erro],
-                backgroundColor: ['#28a745', '#ffc107', '#dc3545', '#6c757d']
+                data: [contagemStatus.ok, contagemStatus.proximo, contagemStatus.pendente, contagemStatus.erro, contagemStatus.agendado],
+                backgroundColor: ['#28a745', '#ffc107', '#dc3545', '#6c757d', '#17a2b8']
             }]
         },
         options: {
@@ -385,12 +455,27 @@ function atualizarGraficoStatus(dados) {
     });
 }
 
-// Função para recarregar os dados periodicamente (opcional)
-function iniciarAtualizacaoAutomatica() {
-    setInterval(() => {
-        carregarRelatorio();
-    }, 300000); // Recarrega a cada 5 minutos
+// Função para recarregar os dados manualmente
+function recarregarDados() {
+    paginaAtual = 1;
+    carregarRelatorio();
+    alert('Dados recarregados com sucesso!');
 }
 
-// Iniciar atualização automática se necessário
-// iniciarAtualizacaoAutomatica();
+// Adicionar botão de recarregar se necessário
+function adicionarBotaoRecarregar() {
+    const header = document.querySelector('.d-sm-flex.align-items-center.justify-content-between.mb-4');
+    if (header && !document.getElementById('btnRecarregar')) {
+        const btn = document.createElement('button');
+        btn.id = 'btnRecarregar';
+        btn.className = 'd-none d-sm-inline-block btn btn-sm btn-primary shadow-sm';
+        btn.innerHTML = '<i class="fas fa-sync-alt fa-sm text-white-50"></i> Recarregar Dados';
+        btn.onclick = recarregarDados;
+        header.appendChild(btn);
+    }
+}
+
+// Inicializar botão de recarregar quando a página carregar
+document.addEventListener('DOMContentLoaded', function() {
+    setTimeout(adicionarBotaoRecarregar, 1000);
+});
