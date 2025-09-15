@@ -89,11 +89,18 @@ class Database:
             rows = cursor.fetchall()
             
             result = self._rows_to_dict_list(rows)
+            
+            # Log para debug
+            print(f"Total de desinfecções: {len(result)}")
+            if result:
+                print(f"Primeiro registro: {result[0]}")
+            
             return result
             
         except Exception as e:
-            logger.error(f"Error getting desinfeccoes: {e}")
-            raise
+            logger.error(f"Erro em get_all_desinfeccoes: {str(e)}")
+            # Retornar array vazio em caso de erro
+            return []
         finally:
             if conn:
                 conn.close()
