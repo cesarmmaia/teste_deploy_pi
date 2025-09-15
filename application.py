@@ -12,9 +12,8 @@ app = Flask(__name__,
 
 CORS(app)
 
-# Configuração para Render - usando variáveis de ambiente
+# Configuração para Render
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'dev-key-change-in-production')
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 
 # Inicializar banco de dados
 db = Database()
