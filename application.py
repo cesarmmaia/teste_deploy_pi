@@ -207,68 +207,100 @@ def concluir_agendamento(id):
 @login_required
 def api_relatorio():
     try:
-        desinfeccoes = db.get_all_desinfeccoes()
+        print("Iniciando processamento do relatório...")
         
-        # Verificar se há registros
+        desinfeccoes = db.get_all_desinfeccoes()
+        print(f"Desinfecções obtidas: {len(desinfeccoes)}")
+        
         if not desinfeccoes:
-            return jsonify({'message': 'Nenhum registro de desinfecção encontrado'}), 200
-
-        # Processar dados para relatório
+            return jsonify({
+                'estatisticas': {
+                    'total': 0, 'ok': 0, 'proximo': 0, 'pendente': 0, 'com_erro': 0
+                },
+                'desinfeccoes': []
+            })
+        
+        desinfeccoes_processadas = []
+        
         for desinfeccao in desinfeccoes:
             try:
-                # Converter string para objeto datetime
-                data_desinfeccao = datetime.strptime(desinfeccao['data_desinfeccao'], '%Y-%m-%d')
+                # Converter data para formato seguro
+                data_desinfeccao = None
                 
-                # Calcular diferença de dias (apenas dias positivos)
+                if isinstance(desinfeccao['data_desinfeccao'], str):
+                    data_desinfeccao = datetime.strptime(desinfeccao['data_desinfeccao'], '%Y-%m-%d')
+                else:
+                    # Se já é um objeto date do PostgreSQL
+                    data_desinfeccao = desinfeccao['data_desinfeccao']
+                    if hasattr(data_desinfeccao, 'strftime'):
+                        data_desinfeccao = datetime.combine(data_desinfeccao, datetime.min.time())
+                
                 dias_desde_desinfeccao = max(0, (datetime.now() - data_desinfeccao).days)
                 
-                # Determinar status baseado nos dias
+                status = 'ok'
                 if dias_desde_desinfeccao >= 15:
                     status = 'pendente'
                 elif dias_desde_desinfeccao >= 10:
                     status = 'proximo'
-                else:
-                    status = 'ok'
                 
-                # Adicionar campos calculados
-                desinfeccao['dias_desde_desinfeccao'] = dias_desde_desinfeccao
-                desinfeccao['status'] = status
-                desinfeccao['data_formatada'] = data_desinfeccao.strftime('%d/%m/%Y')
+                desinfeccao_processada = {
+                    'id': desinfeccao['id'],
+                    'numero_baia': desinfeccao['numero_baia'],
+                    'data_desinfeccao': desinfeccao['data_desinfeccao'],
+                    'data_formatada': data_desinfeccao.strftime('%d/%m/%Y'),
+                    'dias_desde_desinfeccao': dias_desde_desinfeccao,
+                    'metodo': desinfeccao['metodo'],
+                    'observacao': desinfeccao.get('observacao', ''),
+                    'status': status,
+                    'criado_em': desinfeccao.get('criado_em'),
+                    'atualizado_em': desinfeccao.get('atualizado_em')
+                }
                 
-            except ValueError as ve:
-                # Log de erro para data inválida
-                print(f"Erro ao processar data: {desinfeccao['data_desinfeccao']} - {ve}")
-                desinfeccao['dias_desde_desinfeccao'] = None
-                desinfeccao['status'] = 'erro'
-                desinfeccao['data_formatada'] = 'Data inválida'
-
-        # Ordenar por data de desinfecção (mais recente primeiro)
-        desinfeccoes_ordenadas = sorted(
-            desinfeccoes,
-            key=lambda x: (
-                x['dias_desde_desinfeccao'] is not None,
-                -x['dias_desde_desinfeccao'] if x['dias_desde_desinfeccao'] is not None else 0
-            ),
-            reverse=True
-        )
-
-        # Estatísticas para dashboard
+                desinfeccoes_processadas.append(desinfeccao_processada)
+                
+            except Exception as e:
+                print(f"Erro ao processar desinfecção {desinfeccao.get('id')}: {str(e)}")
+                # Adicionar registro com erro
+                desinfeccoes_processadas.append({
+                    'id': desinfeccao.get('id', 'N/A'),
+                    'numero_baia': desinfeccao.get('numero_baia', 'N/A'),
+                    'data_desinfeccao': desinfeccao.get('data_desinfeccao', 'N/A'),
+                    'data_formatada': 'Erro',
+                    'dias_desde_desinfeccao': None,
+                    'metodo': desinfeccao.get('metodo', 'N/A'),
+                    'observacao': f"Erro no processamento: {str(e)}",
+                    'status': 'erro',
+                    'criado_em': desinfeccao.get('criado_em'),
+                    'atualizado_em': desinfeccao.get('atualizado_em')
+                })
+        
+        # Estatísticas
         estatisticas = {
-            'total': len(desinfeccoes_ordenadas),
-            'ok': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'ok'),
-            'proximo': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'proximo'),
-            'pendente': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'pendente'),
-            'com_erro': sum(1 for d in desinfeccoes_ordenadas if d.get('status') == 'erro')
+            'total': len(desinfeccoes_processadas),
+            'ok': sum(1 for d in desinfeccoes_processadas if d.get('status') == 'ok'),
+            'proximo': sum(1 for d in desinfeccoes_processadas if d.get('status') == 'proximo'),
+            'pendente': sum(1 for d in desinfeccoes_processadas if d.get('status') == 'pendente'),
+            'com_erro': sum(1 for d in desinfeccoes_processadas if d.get('status') == 'erro')
         }
-
+        
         return jsonify({
             'estatisticas': estatisticas,
-            'desinfeccoes': desinfeccoes_ordenadas
+            'desinfeccoes': desinfeccoes_processadas
         })
         
     except Exception as e:
-        print(f"Erro crítico em /api/relatorio: {e}")
-        return jsonify({'error': 'Erro interno do servidor ao processar relatório'}), 500
+        print(f"ERRO CRÍTICO em /api/relatorio: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        # Retornar resposta de erro formatada
+        return jsonify({
+            'estatisticas': {
+                'total': 0, 'ok': 0, 'proximo': 0, 'pendente': 0, 'com_erro': 1
+            },
+            'desinfeccoes': [],
+            'error': 'Erro interno do servidor'
+        }), 500
 
 # Rota de health check para Render
 @app.route('/health')
